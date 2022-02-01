@@ -1,0 +1,146 @@
+solutionName "Wehrkonfigurator.Test"
+projectName "User"
+
+enum Role {
+  Administrator
+  HstEmployee
+  User
+}
+
+entity User {
+  email string
+  name string
+  role Role
+  emailVerified bool
+  passwordHash string
+  verificationTokens VerificationToken[]
+}
+
+type VerificationToken {
+  token string
+  expiresAt DateTime
+}
+
+options {
+  verificationTokenLifetimeHours int
+  verificationEmailTemplatePath string
+  verificationEmailLink string
+  verificationEmailSubject string
+  resetPasswordEmailTemplatePath string
+  resetPasswordEmailLink string
+  resetPasswordEmailSubject string
+}
+
+errors {
+  notFound "USER_NOT_FOUND" "User could not be found in the database"
+  invalidPassword "INVALID_PASSWORD" "The password is invalid"
+  invalidCredentials "INVALID_CREDENTIALS" "The email or password is invalid"
+  emailTaken "EMAIL_TAKEN" "The email is already taken"
+}
+
+mutations {
+  addVerificationToken: (id string, verificationToken VerificationToken) => ()
+  createUser: (user User) => (user User)
+  removeVerificationToken: (id string, token string) => ()
+  signIn: (id string, email string) => ()
+  signOut: () => ()
+  updatePassword: (id string, passwordHash string) => ()
+  verifyUser: (id string) => ()
+}
+
+queries {
+  checkMatchingPassword: (user User, password string) => (isMatch bool)
+  checkUserVerified: (user User) => (userVerified bool)
+  createVerificationToken: () => (verificationToken VerificationToken)
+  determineRole: (email string) => (role Role)
+  getUserByEmail: (email string) => (user User?)
+  getUserByVerificationToken: (token string) => (user User?)
+  hashPassword: (password string) => (hash string)
+  sendResetPasswordEmail: (email string, token string) => ()
+  sendVerificationEmail: (user User) => ()
+  validatePassword: (password string) => (isValid bool)
+}
+
+useCases {
+  changePassword: (email string, currentPassword string, newPassword string => (error Error?) {
+    getUserByEmail email as user
+    catch it == null => notFound
+    
+    validatePassword newPassword
+    catch !it => invalidPassword
+    
+    checkMatchingPassword user, currentPassword
+    catch !it => invalidCredentials
+    
+    hashPassword newPassword
+    updatePassword user.id, it
+  }
+  forgotPassword: (email string) => (error Error?) {
+    getUserByEmail email as user
+    catch it == null => notFound
+    
+    createVerificationToken as verificationToken
+    
+    addVerificationToken user.id, verificationToken
+    sendResetPasswordEmail user.email, verificationToken.token
+  }
+  login: (email string, password string) => (user User?, error Error?) {
+    getUserByEmail email as user
+    catch it == null => notFound
+    
+    checkUserVerified user
+    catch !it => invalidCredentials
+    
+    checkMatchingPassword user, password
+    catch !it => invalidCredentials
+    
+    signIn user.id user.email
+    
+    user
+  }
+  logout: () => () {
+    signOut
+  }
+  register: (email string, name string, password string) => (user User?, error Error?) {
+    validatePassword password
+    catch !it => invalidPassword
+    
+    getUserByEmail email
+    catch it != null => emailTaken
+    
+    hashPassword password as passwordHash
+    determineRole email as role
+    createVerificationToken as verificationToken
+    User.init email name role false passwordHash [verificationToken]
+    createUser it as user
+    
+    sendVerificationEmail user
+    
+    user
+  }
+  resetPassword: (token string, newPassword string) => (error Error?) {
+    getUserByVerificationToken token as user
+    catch it == null => notFound
+    
+    validatePassword password
+    catch !it => invalidPassword
+    
+    hashPassword newPassword
+    
+    updatePassword user.id, it
+    removeVerificationToken user.id, token
+  }
+  userByEmail: (email string) => (user User?) {
+    getUserByEmail email
+  }
+  verifyEmail: (token string) => (user User?, error Error?) {
+    getUserByVerificationToken token
+    catch it == null => notFound
+    
+    removeVerificationToken it.id, token
+    verifyUser it.id
+    signIn it.id it.email
+    
+    it
+  }
+}
